@@ -161,7 +161,6 @@ Config.PermissionBridge = {
         }
     },
     ExternalAce = {
-        Enabled = false,
         -- Disabled: this maps menu permissions onto generic `command.*` aces.
         -- Since `add_ace group.admin command allow` grants every `command.*` via
         -- inheritance, leaving this on hands full menu access to every admin and
@@ -238,6 +237,22 @@ Config.PermissionBridge = {
 
 Config.Security = {
     ActionCooldown = 650,
+    SnapshotCooldown = 1000,
+    ControlInputCooldown = 45,
+    StrictAllowLists = true,
+    AllowCustomEventPayloads = false,
+    MaxPayloadDepth = 4,
+    MaxPayloadKeys = 50,
+    MaxTextLength = 900,
+    MaxItemAmount = 1000,
+    MaxWeaponAmmo = 5000,
+    MaxMoneyAmount = 10000000,
+    MaxBanMinutes = 5256000,
+    MaxTeleportCoordinate = 12000.0,
+    MinTeleportZ = -1000.0,
+    MaxTeleportZ = 3000.0,
+    CleanupSpawnedVehiclesOnStop = true,
+    AllowedMoneyAccounts = { 'cash', 'bank', 'crypto', 'black_money' },
     BanFile = 'bans.json',
     WarningsFile = 'warnings.json',
     NotesFile = 'notes.json',

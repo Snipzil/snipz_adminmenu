@@ -11,6 +11,8 @@ local adminChatLogs = {}
 local serverConsoleLogs = {}
 local lastAction = {}
 local lastRemoteFeedRequest = {}
+local lastSnapshotRequest = {}
+local lastControlInput = {}
 local controlSessions = {}
 local returnCoords = {}
 local chatMuted = {}
@@ -133,7 +135,7 @@ local rateLimitExemptActions = {
 }
 
 local function resourceStarted(resourceName)
-    return resourceName and resourceName ~= '' and GetResourceState(resourceName) == 'started'
+    return type(resourceName) == 'string' and resourceName ~= '' and GetResourceState(resourceName) == 'started'
 end
 
 local function qbxStarted()
@@ -237,6 +239,130 @@ local function normalizedPlate(value)
     return trim(value):upper()
 end
 
+local listContains
+
+local function normalizedModel(value)
+    return trim(cleanText(value, 80)):lower()
+end
+
+local function securityValue(key, fallback)
+    local security = Config.Security or {}
+    if security[key] == nil then return fallback end
+    return security[key]
+end
+
+local function strictAllowLists()
+    return securityValue('StrictAllowLists', true) ~= false
+end
+
+local function configuredEntry(list, value, fields)
+    local wanted = trim(cleanText(value, 100)):lower()
+    if wanted == '' or type(list) ~= 'table' then return nil end
+
+    for _, entry in ipairs(list) do
+        if type(entry) == 'string' and entry:lower() == wanted then
+            return { value = entry }
+        elseif type(entry) == 'table' then
+            for _, field in ipairs(fields or {}) do
+                if trim(cleanText(entry[field], 100)):lower() == wanted then
+                    return entry
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function configuredValueOrError(list, value, fields, canonicalField, label)
+    local cleaned = cleanText(value, 80)
+    if cleaned == '' then return nil, ('%s is required.'):format(label) end
+    if not strictAllowLists() or type(list) ~= 'table' or #list == 0 then
+        return cleaned
+    end
+
+    local entry = configuredEntry(list, cleaned, fields)
+    if not entry then
+        return nil, ('%s is not configured.'):format(label)
+    end
+
+    return cleanText(entry[canonicalField] or entry.value or cleaned, 80), nil, entry
+end
+
+local function gradeAllowed(entry, grade)
+    if not strictAllowLists() or type(entry) ~= 'table' or type(entry.grades) ~= 'table' or #entry.grades == 0 then
+        return true
+    end
+
+    for _, value in ipairs(entry.grades) do
+        local allowedGrade = type(value) == 'table' and (value.grade or value.level or value.value) or value
+        if tonumber(allowedGrade) == tonumber(grade) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function moneyAccountAllowed(account)
+    account = cleanText(account, 40)
+    local allowed = securityValue('AllowedMoneyAccounts', { 'cash', 'bank', 'crypto', 'black_money' })
+    if type(allowed) ~= 'table' or #allowed == 0 then return account ~= '' end
+    return listContains(allowed, account)
+end
+
+local function weatherAllowed(weather)
+    if not strictAllowLists() then return true end
+    local presets = (Config.Weather or {}).Presets
+    if type(presets) ~= 'table' or #presets == 0 then return true end
+    return listContains(presets, weather)
+end
+
+local function safePayload(value, depth)
+    depth = depth or 0
+    local maxDepth = tonumber(securityValue('MaxPayloadDepth', 4)) or 4
+    local valueType = type(value)
+
+    if valueType == 'string' then
+        return cleanText(value, tonumber(securityValue('MaxTextLength', 900)) or 900)
+    end
+
+    if valueType == 'number' then
+        if value ~= value or value == math.huge or value == -math.huge then return 0 end
+        return value
+    end
+
+    if valueType == 'boolean' or value == nil then
+        return value
+    end
+
+    if valueType ~= 'table' or depth >= maxDepth then
+        return nil
+    end
+
+    local output = {}
+    local count = 0
+    local maxKeys = tonumber(securityValue('MaxPayloadKeys', 50)) or 50
+
+    for key, child in pairs(value) do
+        count = count + 1
+        if count > maxKeys then break end
+
+        local safeKey
+        if type(key) == 'number' then
+            safeKey = key
+        elseif type(key) == 'string' then
+            safeKey = cleanText(key, 80)
+        end
+
+        if safeKey ~= nil and safeKey ~= '' then
+            output[safeKey] = safePayload(child, depth + 1)
+        end
+    end
+
+    return output
+end
+
 local function aceObject(permission)
     if not permission or permission == '' then return Config.Ace.Root end
     if permission == Config.Ace.Root or permission:sub(1, #Config.Ace.Root + 1) == (Config.Ace.Root .. '.') then
@@ -245,7 +371,7 @@ local function aceObject(permission)
     return ('%s.%s'):format(Config.Ace.Root, permission)
 end
 
-local function listContains(list, value)
+listContains = function(list, value)
     if type(list) ~= 'table' then return false end
     if list[value] == true then return true end
 
@@ -877,7 +1003,7 @@ end
 
 local function getCoords(source)
     local ped = GetPlayerPed(source)
-    if not ped or ped == 0 then
+    if not ped or ped == 0 or not DoesEntityExist(ped) then
         return nil
     end
 
@@ -892,7 +1018,7 @@ end
 
 local function getPlayerHealth(source)
     local ped = GetPlayerPed(source)
-    if not ped or ped == 0 then
+    if not ped or ped == 0 or not DoesEntityExist(ped) then
         return { health = 0, armor = 0 }
     end
 
@@ -1273,7 +1399,7 @@ local function qbxOwnedVehicleRows(maxVehicles)
         if type(MySQL) == 'table' and type(MySQL.query) == 'table' and type(MySQL.query.await) == 'function' then
             local limit = math.max(1, math.min(tonumber(maxVehicles) or 80, 250))
             local plateOk, plateRows = pcall(function()
-                return MySQL.query.await(('SELECT id, plate FROM player_vehicles WHERE state = 0 LIMIT %d'):format(limit))
+                return MySQL.query.await('SELECT id, plate FROM player_vehicles WHERE state = 0 LIMIT ?', { limit })
             end)
 
             if plateOk and type(plateRows) == 'table' then
@@ -1305,7 +1431,7 @@ local function mysqlOwnedVehicleRows(maxVehicles)
 
     local limit = math.max(1, math.min(tonumber(maxVehicles) or 80, 250))
     local ok, rows = pcall(function()
-        return MySQL.query.await(('SELECT id, citizenid, vehicle, mods, garage, state, coords, plate FROM player_vehicles WHERE state = 0 LIMIT %d'):format(limit))
+        return MySQL.query.await('SELECT id, citizenid, vehicle, mods, garage, state, coords, plate FROM player_vehicles WHERE state = 0 LIMIT ?', { limit })
     end)
 
     if not ok or type(rows) ~= 'table' then return nil end
@@ -1572,6 +1698,61 @@ local function targetOrError(data)
     return target
 end
 
+local function targetOrSelf(source, data)
+    local target = tonumber(data.target or data.targetId or data.id)
+    if not target then return source end
+    if not GetPlayerName(target) then return nil, 'Player is no longer online.' end
+    return target
+end
+
+local function safeTeleportCoords(data)
+    local coords = {
+        x = tonumber(data.x),
+        y = tonumber(data.y),
+        z = tonumber(data.z),
+        h = tonumber(data.h) or 0
+    }
+
+    if not coords.x or not coords.y or not coords.z then
+        return nil, 'Coordinates are invalid.'
+    end
+
+    local limit = tonumber(securityValue('MaxTeleportCoordinate', 12000.0)) or 12000.0
+    local minZ = tonumber(securityValue('MinTeleportZ', -1000.0)) or -1000.0
+    local maxZ = tonumber(securityValue('MaxTeleportZ', 3000.0)) or 3000.0
+
+    if math.abs(coords.x) > limit or math.abs(coords.y) > limit or coords.z < minZ or coords.z > maxZ then
+        return nil, 'Coordinates are outside the configured safe bounds.'
+    end
+
+    coords.h = clamp(coords.h, 0, 360)
+    return coords
+end
+
+local function currentServerVehicleInfo(source)
+    if source == 0 or not GetPlayerName(source) then return nil end
+
+    local ped = GetPlayerPed(source)
+    if not ped or ped == 0 or not DoesEntityExist(ped) then return nil end
+
+    local vehicleOk, vehicle = pcall(GetVehiclePedIsIn, ped, false)
+    if not vehicleOk or not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then
+        return nil
+    end
+
+    local driverOk, driver = pcall(GetPedInVehicleSeat, vehicle, -1)
+    local plateOk, plate = pcall(GetVehicleNumberPlateText, vehicle)
+    local modelOk, modelHash = pcall(GetEntityModel, vehicle)
+
+    return {
+        entity = vehicle,
+        ped = ped,
+        isDriver = driverOk and driver == ped,
+        plate = normalizedPlate(plateOk and plate or ''),
+        modelHash = modelOk and tonumber(modelHash) or 0
+    }
+end
+
 local function selfTargetDeniedReason(source, action, data)
     if source == 0 or type(data) ~= 'table' then return nil end
 
@@ -1591,7 +1772,8 @@ local function rateLimited(source)
 
     local current = GetGameTimer()
     local previous = lastAction[source] or 0
-    if current - previous < Config.Security.ActionCooldown then
+    local cooldown = math.max(250, tonumber(securityValue('ActionCooldown', 650)) or 650)
+    if current - previous < cooldown then
         return true
     end
 
@@ -1745,7 +1927,8 @@ end
 
 local function addItem(target, item, amount, metadata)
     item = cleanText(item, 80)
-    amount = clamp(amount, 1, 100000)
+    amount = clamp(amount, 1, tonumber(securityValue('MaxItemAmount', 1000)) or 1000)
+    metadata = safePayload(metadata or {}, 0)
 
     if inventoryResourceStarted() then
         local ok, result = pcall(function()
@@ -1765,7 +1948,7 @@ end
 
 local function removeItem(target, item, amount)
     item = cleanText(item, 80)
-    amount = clamp(amount, 1, 100000)
+    amount = clamp(amount, 1, tonumber(securityValue('MaxItemAmount', 1000)) or 1000)
 
     if inventoryResourceStarted() then
         local ok, result = pcall(function()
@@ -1849,7 +2032,11 @@ end
 
 local function moneyAction(target, mode, account, amount)
     account = cleanText(account, 40)
-    amount = clamp(amount, 0, 100000000)
+    if not moneyAccountAllowed(account) then
+        return false
+    end
+
+    amount = clamp(amount, 0, tonumber(securityValue('MaxMoneyAmount', 10000000)) or 10000000)
 
     local player = getQbxPlayer(target)
     if not player or not player.Functions then
@@ -1893,6 +2080,16 @@ local function consoleCommandAllowed(source, command)
     end
 
     return false
+end
+
+local function safeConsoleCommand(value)
+    local command = cleanText(value, 180)
+    if command == '' then return nil, 'Command is empty.' end
+    if command:find('[;&|`<>]', 1) then
+        return nil, 'Command contains blocked control characters.'
+    end
+
+    return command
 end
 
 local handlers = {}
@@ -2190,8 +2387,8 @@ handlers['player.ban'] = function(source, data)
     local reason = cleanText(data.reason, 220)
     if reason == '' then reason = 'Banned by staff.' end
 
-    local minutes = tonumber(data.duration) or 0
-    local fxPanelDuration = formatFxPanelDuration(data.duration)
+    local minutes = clamp(data.duration, 0, tonumber(securityValue('MaxBanMinutes', 5256000)) or 5256000)
+    local fxPanelDuration = formatFxPanelDuration(minutes)
     local fxPanelHandled, fxPanelError = runFxPanelModerationExport(source, 'banPlayer', 'players.ban', target, reason, fxPanelDuration)
     if fxPanelHandled == false then return false, fxPanelError end
 
@@ -2247,13 +2444,15 @@ end
 
 handlers['player.reviveRadius'] = function(source, data)
     local radius = clamp(data.radius, 1, 100)
-    local origin = GetEntityCoords(GetPlayerPed(source))
+    local originCoords = getCoords(source)
+    if not originCoords then return false, 'Your coordinates are unavailable.' end
+    local origin = vector3(originCoords.x, originCoords.y, originCoords.z)
     local revived = 0
 
     for _, value in ipairs(GetPlayers()) do
         local target = tonumber(value)
         local ped = GetPlayerPed(target)
-        if ped and ped ~= 0 and #(origin - GetEntityCoords(ped)) <= radius then
+        if ped and ped ~= 0 and DoesEntityExist(ped) and #(origin - GetEntityCoords(ped)) <= radius then
             reviveTarget(target)
             revived = revived + 1
         end
@@ -2570,6 +2769,7 @@ handlers['player.controlStop'] = function(source)
     end
 
     controlSessions[source] = nil
+    lastControlInput[source] = nil
     TriggerClientEvent('snipz_adminmenu:client:controlStop', source)
     logAction(source, 'Control Stop', actorName(source), '')
     return true, 'Control stopped.'
@@ -2638,16 +2838,8 @@ handlers['player.teleportPreset'] = function(source, data)
 end
 
 handlers['player.teleportCoords'] = function(source, data)
-    local coords = {
-        x = tonumber(data.x),
-        y = tonumber(data.y),
-        z = tonumber(data.z),
-        h = tonumber(data.h) or 0
-    }
-
-    if not coords.x or not coords.y or not coords.z then
-        return false, 'Coordinates are invalid.'
-    end
+    local coords, coordsErr = safeTeleportCoords(data)
+    if not coords then return false, coordsErr end
 
     TriggerClientEvent('snipz_adminmenu:client:teleport', source, coords)
     logAction(source, 'Teleport Coords', actorName(source), ('%.2f %.2f %.2f'):format(coords.x, coords.y, coords.z))
@@ -2743,8 +2935,8 @@ handlers['player.setPed'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local model = cleanText(data.model, 80)
-    if model == '' then return false, 'Ped model is required.' end
+    local model, modelErr = configuredValueOrError(Config.Peds or {}, data.model, { 'model', 'name' }, 'model', 'Ped model')
+    if not model then return false, modelErr end
 
     TriggerClientEvent('snipz_adminmenu:client:setPed', target, model)
     logAction(source, 'Set Ped', actorName(target), model)
@@ -2755,10 +2947,10 @@ handlers['player.giveWeapon'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local weapon = cleanText(data.weapon or data.name, 80)
-    if weapon == '' then return false, 'Weapon is required.' end
+    local weapon, weaponErr = configuredValueOrError(Config.Weapons or {}, data.weapon or data.name, { 'name', 'weapon' }, 'name', 'Weapon')
+    if not weapon then return false, weaponErr end
 
-    TriggerClientEvent('snipz_adminmenu:client:giveWeapon', target, weapon, clamp(data.ammo, 1, 9999))
+    TriggerClientEvent('snipz_adminmenu:client:giveWeapon', target, weapon, clamp(data.ammo, 1, tonumber(securityValue('MaxWeaponAmmo', 5000)) or 5000))
     logAction(source, 'Give Weapon', actorName(target), weapon)
     return true, 'Weapon given.'
 end
@@ -2797,9 +2989,10 @@ handlers['player.setJob'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local job = cleanText(data.job, 60)
+    local job, jobErr, jobEntry = configuredValueOrError(Config.Jobs or {}, data.job, { 'name', 'job' }, 'name', 'Job')
+    if not job then return false, jobErr end
     local grade = clamp(data.grade, 0, 100)
-    if job == '' then return false, 'Job is required.' end
+    if not gradeAllowed(jobEntry, grade) then return false, 'Job grade is not configured.' end
 
     if qbxStarted() then
         local ok = pcall(function()
@@ -2827,9 +3020,10 @@ handlers['player.setGang'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local gang = cleanText(data.gang or data.name, 60)
+    local gang, gangErr, gangEntry = configuredValueOrError(Config.Gangs or {}, data.gang or data.name, { 'name', 'gang' }, 'name', 'Gang')
+    if not gang then return false, gangErr end
     local grade = clamp(data.grade, 0, 100)
-    if gang == '' then return false, 'Gang is required.' end
+    if not gradeAllowed(gangEntry, grade) then return false, 'Gang grade is not configured.' end
 
     if qbxStarted() then
         local ok = pcall(function()
@@ -2887,8 +3081,8 @@ handlers['player.setLicense'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local license = cleanText(data.license or data.name, 60)
-    if license == '' then return false, 'License is required.' end
+    local license, licenseErr = configuredValueOrError(Config.Licenses or {}, data.license or data.name, { 'name', 'license' }, 'name', 'License')
+    if not license then return false, licenseErr end
 
     local state = data.state ~= false
     local playerData = getPlayerData(target)
@@ -2975,7 +3169,7 @@ handlers['player.deleteCharacter'] = function(source, data)
     if not target then return false, err end
 
     local playerData = getPlayerData(target)
-    local citizenid = cleanText(data.citizenid or playerData.citizenid or playerData.citizenId, 80)
+    local citizenid = cleanText(playerData.citizenid or playerData.citizenId, 80)
     if citizenid == '' then return false, 'Citizen ID is missing.' end
 
     if not qbxStarted() then return false, 'qbx_core is not available.' end
@@ -2995,10 +3189,10 @@ handlers['item.give'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local item = cleanText(data.item or data.name, 80)
-    if item == '' then return false, 'Item is required.' end
+    local item, itemErr = configuredValueOrError(Config.Items or {}, data.item or data.name, { 'name', 'item' }, 'name', 'Item')
+    if not item then return false, itemErr end
 
-    local amount = clamp(data.amount, 1, 100000)
+    local amount = clamp(data.amount, 1, tonumber(securityValue('MaxItemAmount', 1000)) or 1000)
     if not addItem(target, item, amount, data.metadata) then
         return false, 'Could not give item.'
     end
@@ -3011,10 +3205,10 @@ handlers['item.remove'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local item = cleanText(data.item or data.name, 80)
-    if item == '' then return false, 'Item is required.' end
+    local item, itemErr = configuredValueOrError(Config.Items or {}, data.item or data.name, { 'name', 'item' }, 'name', 'Item')
+    if not item then return false, itemErr end
 
-    local amount = clamp(data.amount, 1, 100000)
+    local amount = clamp(data.amount, 1, tonumber(securityValue('MaxItemAmount', 1000)) or 1000)
     if not removeItem(target, item, amount) then
         return false, 'Could not remove item.'
     end
@@ -3065,8 +3259,9 @@ handlers['money.add'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local account = data.account or 'cash'
-    local amount = clamp(data.amount, 0, 100000000)
+    local account = cleanText(data.account or 'cash', 40)
+    if not moneyAccountAllowed(account) then return false, 'Money account is not configured.' end
+    local amount = clamp(data.amount, 0, tonumber(securityValue('MaxMoneyAmount', 10000000)) or 10000000)
     if not moneyAction(target, 'add', account, amount) then
         return false, 'Could not add money.'
     end
@@ -3079,8 +3274,9 @@ handlers['money.remove'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local account = data.account or 'cash'
-    local amount = clamp(data.amount, 0, 100000000)
+    local account = cleanText(data.account or 'cash', 40)
+    if not moneyAccountAllowed(account) then return false, 'Money account is not configured.' end
+    local amount = clamp(data.amount, 0, tonumber(securityValue('MaxMoneyAmount', 10000000)) or 10000000)
     if not moneyAction(target, 'remove', account, amount) then
         return false, 'Could not remove money.'
     end
@@ -3093,8 +3289,9 @@ handlers['money.set'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local account = data.account or 'cash'
-    local amount = clamp(data.amount, 0, 100000000)
+    local account = cleanText(data.account or 'cash', 40)
+    if not moneyAccountAllowed(account) then return false, 'Money account is not configured.' end
+    local amount = clamp(data.amount, 0, tonumber(securityValue('MaxMoneyAmount', 10000000)) or 10000000)
     if not moneyAction(target, 'set', account, amount) then
         return false, 'Could not set money.'
     end
@@ -3104,12 +3301,12 @@ handlers['money.set'] = function(source, data)
 end
 
 handlers['vehicle.spawn'] = function(source, data)
-    local model = cleanText(data.model, 80)
-    if model == '' then return false, 'Vehicle model is required.' end
+    local model, modelErr = configuredValueOrError(Config.Vehicles or {}, data.model, { 'model', 'name' }, 'model', 'Vehicle model')
+    if not model then return false, modelErr end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', source, {
         type = 'spawn',
-        model = model,
+        model = normalizedModel(model),
         plate = cleanText(data.plate, 8),
         fuelResource = Config.Integrations.FuelResource,
         keysEvent = Config.Integrations.VehicleKeysEvent,
@@ -3124,12 +3321,12 @@ handlers['vehicle.spawnForPlayer'] = function(source, data)
     local target, err = targetOrError(data)
     if not target then return false, err end
 
-    local model = cleanText(data.model, 80)
-    if model == '' then return false, 'Vehicle model is required.' end
+    local model, modelErr = configuredValueOrError(Config.Vehicles or {}, data.model, { 'model', 'name' }, 'model', 'Vehicle model')
+    if not model then return false, modelErr end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, {
         type = 'spawn',
-        model = model,
+        model = normalizedModel(model),
         plate = cleanText(data.plate, 8),
         fuelResource = Config.Integrations.FuelResource,
         keysEvent = Config.Integrations.VehicleKeysEvent,
@@ -3158,8 +3355,9 @@ handlers['vehicle.giveOwned'] = function(source, data)
     local citizenid = cleanText(playerData.citizenid or playerData.citizenId, 80)
     if citizenid == '' then return false, 'Could not find target citizen ID.' end
 
-    local model = cleanText(data.model, 80):gsub('^%s*(.-)%s*$', '%1'):lower()
-    if model == '' then return false, 'Vehicle model is required.' end
+    local model, modelErr = configuredValueOrError(Config.Vehicles or {}, data.model, { 'model', 'name' }, 'model', 'Vehicle model')
+    if not model then return false, modelErr end
+    model = normalizedModel(model)
 
     local plate = cleanText(data.plate, 15):gsub('^%s*(.-)%s*$', '%1'):upper()
     if plate == '' then plate = generatedPlate(data.prefix) end
@@ -3224,12 +3422,25 @@ handlers['vehicle.admincar'] = function(source, data)
     local citizenid = cleanText(playerData.citizenid or playerData.citizenId, 80)
     if citizenid == '' then return false, 'Could not find your citizen ID.' end
 
-    local model = cleanText(data.model, 80):gsub('^%s*(.-)%s*$', '%1'):lower()
-    if model == '' then return false, 'Vehicle model is required.' end
+    local serverVehicle = currentServerVehicleInfo(source)
+    if not serverVehicle then return false, 'You must be inside the vehicle you want to save.' end
+    if not serverVehicle.isDriver then return false, 'You must be driving the vehicle you want to save.' end
 
-    local props = type(data.props) == 'table' and data.props or {}
+    local model, modelErr = configuredValueOrError(Config.Vehicles or {}, data.model, { 'model', 'name' }, 'model', 'Vehicle model')
+    if not model then return false, modelErr end
+    model = normalizedModel(model)
+
+    local props = safePayload(type(data.props) == 'table' and data.props or {}, 0) or {}
     local plate = cleanText(data.plate or props.plate, 15):gsub('^%s*(.-)%s*$', '%1'):upper()
     if plate == '' then return false, 'Vehicle plate is required.' end
+    if serverVehicle.plate ~= '' and normalizedPlate(plate) ~= serverVehicle.plate then
+        return false, 'Vehicle plate no longer matches your current vehicle.'
+    end
+
+    local clientHash = tonumber(data.hash) or tonumber(props.model) or joaat(model)
+    if serverVehicle.modelHash ~= 0 and tonumber(clientHash) ~= serverVehicle.modelHash then
+        return false, 'Vehicle model no longer matches your current vehicle.'
+    end
 
     local existsOk, vehicleId = pcall(function()
         return exports.qbx_vehicles:GetVehicleIdByPlate(plate)
@@ -3240,7 +3451,7 @@ handlers['vehicle.admincar'] = function(source, data)
     end
 
     props.plate = plate
-    props.model = tonumber(data.hash) or tonumber(props.model) or joaat(model)
+    props.model = serverVehicle.modelHash ~= 0 and serverVehicle.modelHash or clientHash
     props.engineHealth = tonumber(props.engineHealth) or 1000.0
     props.bodyHealth = tonumber(props.bodyHealth) or 1000.0
     props.fuelLevel = tonumber(props.fuelLevel) or 100.0
@@ -3273,8 +3484,8 @@ handlers['vehicle.admincar'] = function(source, data)
 end
 
 handlers['vehicle.repair'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, { type = 'repair' })
     logAction(source, 'Repair Vehicle', actorName(target), '')
@@ -3282,8 +3493,8 @@ handlers['vehicle.repair'] = function(source, data)
 end
 
 handlers['vehicle.flip'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, { type = 'flip' })
     logAction(source, 'Flip Vehicle', actorName(target), '')
@@ -3291,8 +3502,8 @@ handlers['vehicle.flip'] = function(source, data)
 end
 
 handlers['vehicle.delete'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, { type = 'delete' })
     logAction(source, 'Delete Vehicle', actorName(target), '')
@@ -3300,8 +3511,8 @@ handlers['vehicle.delete'] = function(source, data)
 end
 
 handlers['vehicle.keys'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, {
         type = 'keys',
@@ -3314,8 +3525,8 @@ handlers['vehicle.keys'] = function(source, data)
 end
 
 handlers['vehicle.refuel'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, {
         type = 'refuel',
@@ -3327,8 +3538,8 @@ handlers['vehicle.refuel'] = function(source, data)
 end
 
 handlers['vehicle.clean'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, { type = 'clean' })
     logAction(source, 'Clean Vehicle', actorName(target), '')
@@ -3336,8 +3547,8 @@ handlers['vehicle.clean'] = function(source, data)
 end
 
 handlers['vehicle.impound'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, { type = 'delete' })
     logAction(source, 'Impound Vehicle', actorName(target), '')
@@ -3345,8 +3556,8 @@ handlers['vehicle.impound'] = function(source, data)
 end
 
 handlers['vehicle.maxMods'] = function(source, data)
-    local target = tonumber(data.target) or source
-    if not GetPlayerName(target) then return false, 'Player is no longer online.' end
+    local target, err = targetOrSelf(source, data)
+    if not target then return false, err end
 
     TriggerClientEvent('snipz_adminmenu:client:vehicle', target, { type = 'maxMods' })
     logAction(source, 'Max Vehicle Mods', actorName(target), '')
@@ -3396,6 +3607,7 @@ end
 handlers['server.weather'] = function(source, data)
     local weather = cleanText(data.weather, 40):upper()
     if weather == '' then return false, 'Weather is required.' end
+    if not weatherAllowed(weather) then return false, 'Weather type is not configured.' end
 
     currentWeather = weather
     local synced = setSyncedWeather(weather)
@@ -3445,8 +3657,8 @@ end
 handlers['console.execute'] = function(source, data)
     if Config.Console.Enabled ~= true then return false, 'Console is disabled.' end
 
-    local command = cleanText(data.command, 180)
-    if command == '' then return false, 'Command is empty.' end
+    local command, commandErr = safeConsoleCommand(data.command)
+    if not command then return false, commandErr end
     if not consoleCommandAllowed(source, command) then
         logConsole('warn', ('Denied command from %s: %s'):format(actorName(source), command), 'console')
         return false, 'That command is not allowlisted.'
@@ -3472,22 +3684,36 @@ handlers['event.trigger'] = function(source, data)
 
     if not allowedEvent then return false, 'Event is not allowlisted.' end
 
-    local payload = data.payload or {}
+    local payload = allowedEvent.payload or {}
+    local customPayloadAllowed = allowedEvent.allowClientPayload == true
+        or allowedEvent.AllowClientPayload == true
+        or (securityValue('AllowCustomEventPayloads', false) == true and allowedEvent.allowClientPayload ~= false)
+
+    if customPayloadAllowed then
+        payload = data.payload or payload
+    end
+
     if type(payload) == 'string' then
         local ok, decoded = pcall(json.decode, payload)
         payload = ok and type(decoded) == 'table' and decoded or {}
     elseif type(payload) ~= 'table' then
         payload = {}
     end
+    payload = safePayload(payload, 0) or {}
 
     local detail = eventName
     if allowedEvent.type == 'client' then
         local target = tonumber(data.target) or -1
+        if target ~= -1 and not GetPlayerName(target) then
+            return false, 'Event target is no longer online.'
+        end
         TriggerClientEvent(eventName, target, payload)
         detail = ('%s -> target %s'):format(eventName, target)
-    else
+    elseif allowedEvent.type == 'server' or not allowedEvent.type then
         TriggerEvent(eventName, source, payload)
         detail = ('%s -> server'):format(eventName)
+    else
+        return false, 'Event type is invalid.'
     end
 
     logAction(source, 'Trigger Event', allowedEvent.label or eventName, detail)
@@ -3497,6 +3723,8 @@ end
 
 local function handleAction(source, data)
     if type(data) ~= 'table' then return end
+    if source == 0 then return end
+    data = safePayload(data, 0) or {}
 
     local action = cleanText(data.action, 80)
     local permission = actionPermissions[action] or 'menu'
@@ -3545,6 +3773,16 @@ RegisterNetEvent('snipz_adminmenu:server:controlInput', function(payload)
     local source = source
     local target = controlSessions[source]
     if not target or not GetPlayerName(target) or type(payload) ~= 'table' then return end
+    if not hasPermission(source, 'spectate') then
+        controlSessions[source] = nil
+        TriggerClientEvent('snipz_adminmenu:client:controlStop', source)
+        return
+    end
+
+    local current = GetGameTimer()
+    local minInterval = math.max(25, tonumber(securityValue('ControlInputCooldown', 45)) or 45)
+    if lastControlInput[source] and current - lastControlInput[source] < minInterval then return end
+    lastControlInput[source] = current
 
     local input = {
         x = math.max(-8.0, math.min(8.0, tonumber(payload.x) or 0.0)),
@@ -3564,6 +3802,7 @@ RegisterNetEvent('snipz_adminmenu:server:controlStop', function()
     end
 
     controlSessions[source] = nil
+    lastControlInput[source] = nil
     TriggerClientEvent('snipz_adminmenu:client:controlStop', source)
 end)
 
@@ -3625,6 +3864,13 @@ RegisterNetEvent('snipz_adminmenu:server:requestSnapshot', function()
         notify(source, Config.Ace.DenyMessage, 'error')
         return
     end
+
+    local current = GetGameTimer()
+    local minInterval = math.max(500, tonumber(securityValue('SnapshotCooldown', 1000)) or 1000)
+    if lastSnapshotRequest[source] and current - lastSnapshotRequest[source] < minInterval then
+        return
+    end
+    lastSnapshotRequest[source] = current
 
     sendSnapshot(source)
 end)
@@ -3753,10 +3999,6 @@ RegisterNetEvent('snipz_adminmenu:server:adminAction', function(data)
     handleAction(source, data)
 end)
 
-AddEventHandler('playerDropped', function()
-    lastRemoteFeedRequest[source] = nil
-end)
-
 AddEventHandler('snipz_adminmenu:server:consoleLog', function(level, message, sourceName)
     logConsole(level, message, sourceName)
 end)
@@ -3856,6 +4098,10 @@ AddEventHandler('playerDropped', function(reason)
     returnCoords[source] = nil
     chatMuted[source] = nil
     escortSessions[source] = nil
+    lastRemoteFeedRequest[source] = nil
+    lastSnapshotRequest[source] = nil
+    lastAction[source] = nil
+    lastControlInput[source] = nil
 
     for target, admin in pairs(escortSessions) do
         if admin == source or target == source then

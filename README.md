@@ -16,18 +16,18 @@ The menu checks permissions server-side through `Config.PermissionBridge`:
 
 - Existing `snipz_adminmenu.*` ACE permissions still work.
 - txAdmin admins are accepted through the server-side `txAdmin:events:adminAuth` event. By default, authenticated txAdmin admins get full menu access.
-- fxPanel, Badger, and DiscordAcePerms-style setups are supported through ACE aliases in `Config.PermissionBridge.ExternalAce`.
+- fxPanel, Badger, and DiscordAcePerms-style setups can be mapped through `Config.PermissionBridge.ExternalAce`, but that bridge is disabled by default so broad `command.*` ACEs do not accidentally unlock the menu.
 
-Most servers can use their existing admin ACE:
-
-```cfg
-add_ace group.admin command allow
-```
-
-Or use a resource-specific full-access ACE:
+Prefer a resource-specific full-access ACE:
 
 ```cfg
 add_ace group.admin snipz_adminmenu allow
+```
+
+Keep broad command access separate unless another tool needs it:
+
+```cfg
+# add_ace group.admin command allow
 ```
 
 Scoped ACE access is still available if you want limited staff roles:
@@ -59,15 +59,16 @@ snipz_adminmenu.server
 snipz_adminmenu.console
 snipz_adminmenu.console.all
 snipz_adminmenu.staff
+snipz_adminmenu.manageAdmins
 snipz_adminmenu.blips
 snipz_adminmenu.destructive
 ```
 
 To keep txAdmin admins limited instead of full access, set `Config.PermissionBridge.TxAdmin.GrantAll = false` and edit `Config.PermissionBridge.TxAdmin.GrantedPermissions`.
 
-To hook an existing Badger/fxPanel ACE object into the menu, add it to `Config.PermissionBridge.ExternalAce.FullAccess` or `Config.PermissionBridge.ExternalAce.PermissionMap`.
+To hook an existing Badger/fxPanel ACE object into the menu, enable `Config.PermissionBridge.ExternalAce` and add it to `FullAccess` or `PermissionMap`.
 
-If `command` is too broad for your server, remove it from `Config.PermissionBridge.ExternalAce.FullAccess` and use `snipz_adminmenu` or a custom full-access ACE instead.
+Leave generic `command.*` entries out of `ExternalAce` unless you intentionally want that broad bridge.
 
 ## Integrations
 
@@ -82,10 +83,11 @@ Edit `config.lua` for your server:
 - `JailResource` / `JailExport`: default to `xt-prison` and `SetJailTime`, with `JailEvent` / `UnjailEvent` as fallbacks.
 - `Weather.Resource`: defaults to `Renewed-Weathersync` through its `qb-weathersync` compatibility exports.
 - `Console.AllowedCommands`: only these console commands can be executed unless the admin has `snipz_adminmenu.console.all`.
+- `Security.StrictAllowLists`: enabled by default, so items, weapons, vehicles, peds, jobs, gangs, licenses, weather, and money accounts must exist in `config.lua` before the menu will apply them.
 - `ChatSuggestions`: controls slash-command autocomplete in the FiveM chat box. This server uses the stock `chat` resource with `qbx_chat_theme`, so suggestions are replayed when either starts. Use `/adminsuggestions` in game to refresh suggestions after a chat/resource restart.
 - `AdminCar.Command` / `AdminCar.Garage`: controls the ps-style current vehicle save command. Leave `Garage = nil` to save it as out, like ps-adminmenu.
 - `PermissionBridge`: maps txAdmin auth and external ACE objects into the menu permissions.
-- `AllowedEvents`: add explicit server/client events for the Events tab.
+- `AllowedEvents`: add explicit server/client events for the Events tab. The configured payload is used by default; set `allowClientPayload = true` on an individual event if staff may edit that payload from the NUI.
 
 ## Stored Data
 

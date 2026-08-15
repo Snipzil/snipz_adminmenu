@@ -3004,7 +3004,7 @@ function renderEvents() {
                         <input id="eventTargetInput" type="number" min="-1" value="${currentEvent?.type === 'client' ? escapeHtml(selectedTarget?.id ?? -1) : -1}">
                     </div>
                     <div class="form-row wide">
-                        <label>Payload JSON ${helpTip('Optional JSON object sent to the event as its payload.')}</label>
+                        <label>Payload JSON ${helpTip('Configured payload sent to the event. Staff edits apply only when the event sets allowClientPayload = true.')}</label>
                         <textarea id="eventPayloadInput" rows="5" spellcheck="false">${escapeHtml(eventPayloadText(currentEvent))}</textarea>
                     </div>
                 </div>

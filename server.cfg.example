@@ -4,12 +4,13 @@ ensure qbx_core
 # ensure monitor
 ensure snipz_adminmenu
 
-# Most txAdmin/fxPanel servers already use this. The menu trusts it by default through
-# Config.PermissionBridge.ExternalAce.FullAccess, so you do not need to add every menu node.
-add_ace group.admin command allow
+# Prefer resource-specific full access. The broad `command allow` ACE is not trusted by
+# default because it can accidentally grant unrelated command permissions.
+add_ace group.admin snipz_adminmenu allow
 
-# Optional resource-specific full access if you do not want to bridge the broad command ACE.
-# add_ace group.admin snipz_adminmenu allow
+# Optional for your other admin tools. This menu does not trust `command.*` unless you
+# explicitly re-enable Config.PermissionBridge.ExternalAce.
+# add_ace group.admin command allow
 
 # Optional Badger/fxPanel aliases. Add your existing objects to Config.PermissionBridge
 # if your server uses different names.

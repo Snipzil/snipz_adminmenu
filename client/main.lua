@@ -39,6 +39,7 @@ local frozenEntity = 0
 local coordLaser = false
 local voiceMuted = false
 local escortedByServerId = nil
+local spawnedVehicles = {}
 
 local function sendNui(action, payload)
     SendNUIMessage({
@@ -103,7 +104,7 @@ local function nuiToast(message, toastType)
     })
 end
 
-local function closeMenu(stopCoordLaser)
+local function closeMenu(stopCoordLaser, skipFocusThread)
     menuOpen = false
     if stopCoordLaser then
         coordLaser = false
@@ -119,30 +120,32 @@ local function closeMenu(stopCoordLaser)
     SetNuiFocus(false, false)
     sendNui('close')
 
-    CreateThread(function()
-        Wait(50)
-        SetNuiFocusKeepInput(false)
-        SetNuiFocus(false, false)
-    end)
+    if not skipFocusThread then
+        CreateThread(function()
+            Wait(50)
+            SetNuiFocusKeepInput(false)
+            SetNuiFocus(false, false)
+        end)
+    end
 end
 
 local function requestControl(entity, timeout)
-    if not entity or entity == 0 then return false end
+    if not entity or entity == 0 or not DoesEntityExist(entity) then return false end
 
     timeout = timeout or 750
     local expires = GetGameTimer() + timeout
 
     NetworkRequestControlOfEntity(entity)
-    while not NetworkHasControlOfEntity(entity) and GetGameTimer() < expires do
+    while DoesEntityExist(entity) and not NetworkHasControlOfEntity(entity) and GetGameTimer() < expires do
         NetworkRequestControlOfEntity(entity)
         Wait(0)
     end
 
-    return NetworkHasControlOfEntity(entity)
+    return DoesEntityExist(entity) and NetworkHasControlOfEntity(entity)
 end
 
 local function resourceStarted(resourceName)
-    return resourceName and resourceName ~= '' and GetResourceState(resourceName) == 'started'
+    return type(resourceName) == 'string' and resourceName ~= '' and GetResourceState(resourceName) == 'started'
 end
 
 local function txAdminBridgeEnabled()
@@ -159,6 +162,7 @@ CreateThread(function()
 end)
 
 local function loadModel(model)
+    if type(model) ~= 'string' and type(model) ~= 'number' then return nil end
     local hash = type(model) == 'number' and model or joaat(model)
     if not IsModelInCdimage(hash) then return nil end
 
@@ -175,7 +179,8 @@ end
 local function currentVehicle()
     local ped = PlayerPedId()
     if IsPedInAnyVehicle(ped, false) then
-        return GetVehiclePedIsIn(ped, false)
+        local vehicle = GetVehiclePedIsIn(ped, false)
+        if vehicle ~= 0 and DoesEntityExist(vehicle) then return vehicle end
     end
 
     return 0
@@ -247,7 +252,7 @@ local function applyGodmodeState(state)
     godmodeVehicle = state and vehicle or 0
 end
 
-local function releaseControlledState()
+local function releaseControlledState(skipSettle)
     controlledByServerId = nil
 
     local ped = PlayerPedId()
@@ -259,7 +264,9 @@ local function releaseControlledState()
         FreezeEntityPosition(vehicle, false)
     end
 
-    settleEntityOnGround(entity)
+    if not skipSettle then
+        settleEntityOnGround(entity)
+    end
     SetPlayerControl(PlayerId(), true, 0)
 end
 
@@ -342,6 +349,7 @@ local function getStreamedPlayerPed(serverId)
 end
 
 local function revivePed(payload)
+    payload = type(payload) == 'table' and payload or {}
     local ped = PlayerPedId()
     local coords = GetEntityCoords(ped)
 
@@ -352,26 +360,30 @@ local function revivePed(payload)
     ClearPlayerWantedLevel(PlayerId())
     SetEntityHealth(ped, GetEntityMaxHealth(ped))
 
-    if payload and payload.reviveEvent then
-        TriggerEvent(payload.reviveEvent)
+    local reviveEvent = type(payload.reviveEvent) == 'string' and payload.reviveEvent or ''
+    local healthResetEvent = type(payload.healthResetEvent) == 'string' and payload.healthResetEvent or ''
+
+    if reviveEvent ~= '' then
+        TriggerEvent(reviveEvent)
     end
-    if payload and payload.healthResetEvent and payload.healthResetEvent ~= payload.reviveEvent then
-        TriggerEvent(payload.healthResetEvent)
+    if healthResetEvent ~= '' and healthResetEvent ~= reviveEvent then
+        TriggerEvent(healthResetEvent)
     end
 end
 
 local function resetHealthBuffer(data)
-    local eventName = data and data.healthResetEvent
+    data = type(data) == 'table' and data or {}
+    local eventName = type(data.healthResetEvent) == 'string' and data.healthResetEvent or ''
     if eventName and eventName ~= '' then
         TriggerEvent(eventName)
     end
 end
 
 local function setVehicleFuel(vehicle, amount, resourceName)
-    if not vehicle or vehicle == 0 then return false end
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
 
     amount = tonumber(amount) or 100.0
-    requestControl(vehicle)
+    if not requestControl(vehicle) then return false end
     SetVehicleFuelLevel(vehicle, amount + 0.0)
 
     if resourceStarted(resourceName) then
@@ -388,8 +400,8 @@ local function setVehicleFuel(vehicle, amount, resourceName)
 end
 
 local function repairVehicle(vehicle)
-    if not vehicle or vehicle == 0 then return false end
-    requestControl(vehicle)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+    if not requestControl(vehicle) then return false end
     SetVehicleFixed(vehicle)
     SetVehicleDeformationFixed(vehicle)
     SetVehicleDirtLevel(vehicle, 0.0)
@@ -402,9 +414,9 @@ local function repairVehicle(vehicle)
 end
 
 local function maxVehicleMods(vehicle)
-    if not vehicle or vehicle == 0 then return false end
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
 
-    requestControl(vehicle)
+    if not requestControl(vehicle) then return false end
     SetVehicleModKit(vehicle, 0)
 
     for modType = 0, 49 do
@@ -425,9 +437,12 @@ local function maxVehicleMods(vehicle)
 end
 
 local function giveKeysForVehicle(vehicle, eventName, resourceName)
-    if not vehicle or vehicle == 0 then return false end
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
 
     local plate = GetVehicleNumberPlateText(vehicle)
+    eventName = type(eventName) == 'string' and eventName or ''
+    resourceName = type(resourceName) == 'string' and resourceName or ''
+
     if resourceStarted(resourceName) then
         local ok, result = pcall(function()
             return exports[resourceName]:addKey(plate)
@@ -444,8 +459,8 @@ local function giveKeysForVehicle(vehicle, eventName, resourceName)
 end
 
 local function flipVehicle(vehicle)
-    if not vehicle or vehicle == 0 then return false end
-    requestControl(vehicle)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+    if not requestControl(vehicle) then return false end
     local coords = GetEntityCoords(vehicle)
     SetEntityCoords(vehicle, coords.x, coords.y, coords.z + 1.0, false, false, false, false)
     SetEntityRotation(vehicle, 0.0, 0.0, GetEntityHeading(vehicle), 2, true)
@@ -454,8 +469,8 @@ local function flipVehicle(vehicle)
 end
 
 local function deleteVehicle(vehicle)
-    if not vehicle or vehicle == 0 then return false end
-    requestControl(vehicle)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+    if not requestControl(vehicle) then return false end
     SetEntityAsMissionEntity(vehicle, true, true)
     DeleteVehicle(vehicle)
     if DoesEntityExist(vehicle) then
@@ -465,8 +480,8 @@ local function deleteVehicle(vehicle)
 end
 
 local function cleanVehicle(vehicle)
-    if not vehicle or vehicle == 0 then return false end
-    requestControl(vehicle)
+    if not vehicle or vehicle == 0 or not DoesEntityExist(vehicle) then return false end
+    if not requestControl(vehicle) then return false end
     SetVehicleDirtLevel(vehicle, 0.0)
     WashDecalsFromVehicle(vehicle, 1.0)
     return true
@@ -520,7 +535,7 @@ local function setEscortState(adminServerId, active)
 end
 
 local function spawnVehicle(data)
-    local model = data and data.model
+    local model = data and type(data.model) == 'string' and data.model:sub(1, 80) or ''
     if not model or model == '' then return end
 
     local hash = loadModel(model)
@@ -541,7 +556,10 @@ local function spawnVehicle(data)
         return
     end
 
-    local plate = data.plate
+    SetEntityAsMissionEntity(vehicle, true, true)
+    spawnedVehicles[#spawnedVehicles + 1] = vehicle
+
+    local plate = data and type(data.plate) == 'string' and data.plate or ''
     if not plate or plate == '' then
         plate = ('ADM%04d'):format(math.random(0, 9999))
     end
@@ -646,6 +664,9 @@ local function saveAdminVehicle()
 end
 
 local function giveVehicleKeys(eventName, resourceName)
+    eventName = type(eventName) == 'string' and eventName or ''
+    resourceName = type(resourceName) == 'string' and resourceName or ''
+
     if (not eventName or eventName == '') and (not resourceName or resourceName == '') then
         nuiToast('Vehicle key event is not configured.', 'warning')
         return
@@ -666,7 +687,7 @@ local function giveVehicleKeys(eventName, resourceName)
 end
 
 local function openMechanicCustomisation(data)
-    local eventName = data and data.mechanicEvent
+    local eventName = data and type(data.mechanicEvent) == 'string' and data.mechanicEvent or ''
     if not eventName or eventName == '' then
         nuiToast('Mechanic customisation event is not configured.', 'warning')
         return
@@ -680,7 +701,9 @@ local function openMechanicCustomisation(data)
     end
 
     closeMenu()
-    TriggerEvent(eventName, data.mechanicId or 'bennys', data.mechanicLabel or data.mechanicId or 'Mechanic')
+    local mechanicId = data and type(data.mechanicId) == 'string' and data.mechanicId or 'bennys'
+    local mechanicLabel = data and type(data.mechanicLabel) == 'string' and data.mechanicLabel or mechanicId
+    TriggerEvent(eventName, mechanicId, mechanicLabel)
 end
 
 local function setCuffedState(state)
@@ -1116,7 +1139,7 @@ local function setSpectateShellHidden(hidden)
     end
 end
 
-local function setNoclipState(state)
+local function setNoclipState(state, skipCameraEase)
     noclip = state
     local ped = PlayerPedId()
     local entity = currentVehicle() ~= 0 and currentVehicle() or ped
@@ -1167,7 +1190,7 @@ local function setNoclipState(state)
         SetEntityHasGravity(entity, true)
         FreezeEntityPosition(entity, false)
         SetEntityVelocity(entity, 0.0, 0.0, 0.0)
-        stopNoclipCamera(225)
+        stopNoclipCamera(skipCameraEase and 0 or 225)
         noclipEntity = 0
         noclipPosition = nil
     end
@@ -1224,7 +1247,7 @@ local function updateBlips()
     end
 end
 
-local function setSpectate(targetServerId, targetCoords)
+local function setSpectate(targetServerId, targetCoords, skipReturnTeleport)
     targetServerId = tonumber(targetServerId)
     spectateRequestId = spectateRequestId + 1
     local requestId = spectateRequestId
@@ -1245,7 +1268,7 @@ local function setSpectate(targetServerId, targetCoords)
         local ped = PlayerPedId()
         setSpectateShellHidden(false)
 
-        if spectateReturnCoords then
+        if spectateReturnCoords and not skipReturnTeleport then
             teleportTo({
                 x = spectateReturnCoords.x,
                 y = spectateReturnCoords.y,
@@ -1440,7 +1463,7 @@ RegisterNetEvent('snipz_adminmenu:client:snapshot', function(snapshot)
 end)
 
 RegisterNetEvent('snipz_adminmenu:client:toast', function(data)
-    data = data or {}
+    data = type(data) == 'table' and data or {}
     nuiToast(data.message or 'Action complete.', data.type or 'inform')
 end)
 
@@ -1473,6 +1496,7 @@ RegisterNetEvent('snipz_adminmenu:client:revive', function(payload)
 end)
 
 RegisterNetEvent('snipz_adminmenu:client:heal', function(data)
+    data = type(data) == 'table' and data or {}
     local ped = PlayerPedId()
     SetEntityHealth(ped, GetEntityMaxHealth(ped))
     ClearPedBloodDamage(ped)
@@ -1483,6 +1507,7 @@ RegisterNetEvent('snipz_adminmenu:client:heal', function(data)
 end)
 
 RegisterNetEvent('snipz_adminmenu:client:resetStatus', function(data)
+    data = type(data) == 'table' and data or {}
     local ped = PlayerPedId()
     ClearPedBloodDamage(ped)
     ClearPedTasks(ped)
@@ -1661,11 +1686,11 @@ RegisterNetEvent('snipz_adminmenu:client:clothing', function(data)
     if type(data) == 'string' then
         events[#events + 1] = data
     elseif type(data) == 'table' then
-        if data.event and data.event ~= '' then
+        if type(data.event) == 'string' and data.event ~= '' then
             events[#events + 1] = data.event
         end
         for _, eventName in ipairs(data.fallbacks or {}) do
-            if eventName and eventName ~= '' then
+            if type(eventName) == 'string' and eventName ~= '' then
                 events[#events + 1] = eventName
             end
         end
@@ -1702,6 +1727,7 @@ RegisterNetEvent('snipz_adminmenu:client:appearanceAction', function(data)
     end
 
     local eventName = data.action == 'barber' and data.barberEvent or data.action == 'tattoo' and data.tattooEvent or nil
+    eventName = type(eventName) == 'string' and eventName or ''
     if not eventName or eventName == '' then
         nuiToast('Appearance integration is not configured.', 'warning')
         return
@@ -1728,6 +1754,7 @@ RegisterNetEvent('snipz_adminmenu:client:setPed', function(model)
 end)
 
 RegisterNetEvent('snipz_adminmenu:client:giveWeapon', function(weapon, ammo)
+    if type(weapon) ~= 'string' and type(weapon) ~= 'number' then return end
     local hash = type(weapon) == 'number' and weapon or joaat(weapon)
     GiveWeaponToPed(PlayerPedId(), hash, tonumber(ammo) or 120, false, true)
 end)
@@ -1737,7 +1764,7 @@ RegisterNetEvent('snipz_adminmenu:client:clearWeapons', function()
 end)
 
 RegisterNetEvent('snipz_adminmenu:client:vehicle', function(data)
-    if not data or not data.type then return end
+    if type(data) ~= 'table' or not data.type then return end
 
     if data.type == 'spawn' then
         spawnVehicle(data)
@@ -2067,7 +2094,7 @@ CreateThread(function()
     while true do
         if godmode then
             applyGodmodeState(true)
-            Wait(0)
+            Wait(500)
         else
             Wait(1000)
         end
@@ -2210,7 +2237,7 @@ CreateThread(function()
     while true do
         if menuOpen then
             TriggerServerEvent('snipz_adminmenu:server:requestSnapshot')
-            Wait(Config.RefreshInterval or 5000)
+            Wait(math.max(1000, tonumber(Config.RefreshInterval) or 5000))
         else
             Wait(1000)
         end
@@ -2220,13 +2247,28 @@ end)
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
 
-    closeMenu(true)
+    if not Config.Security or Config.Security.CleanupSpawnedVehiclesOnStop ~= false then
+        for _, vehicle in ipairs(spawnedVehicles) do
+            if vehicle ~= 0 and DoesEntityExist(vehicle) then
+                if not NetworkHasControlOfEntity(vehicle) then
+                    NetworkRequestControlOfEntity(vehicle)
+                end
+                SetEntityAsMissionEntity(vehicle, true, true)
+                DeleteVehicle(vehicle)
+                if DoesEntityExist(vehicle) then
+                    DeleteEntity(vehicle)
+                end
+            end
+        end
+    end
+
+    closeMenu(true, true)
     coordLaser = false
     sendNui('coordOverlay', {
         active = false
     })
     clearPlayerBlips()
-    if noclip then setNoclipState(false) end
+    if noclip then setNoclipState(false, true) end
     if noclipCamera ~= 0 then stopNoclipCamera(0) end
     noclipLandingGodmode = false
     noclipLandingGodmodeStartedAt = 0
@@ -2239,9 +2281,9 @@ AddEventHandler('onResourceStop', function(resourceName)
         controlTargetServerId = nil
         TriggerServerEvent('snipz_adminmenu:server:controlStop')
     end
-    if spectating then setSpectate(false) end
+    if spectating then setSpectate(false, nil, true) end
     if controlledByServerId then
-        releaseControlledState()
+        releaseControlledState(true)
     end
     if frozen then releaseFrozenState() end
     if adminCuffed then
