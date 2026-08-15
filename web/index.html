@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Snipz Admin</title>
+    <link rel="stylesheet" href="style.css?v=remote-feed-state1">
+</head>
+<body>
+    <div id="app" class="app">
+        <div class="shell" id="shell">
+            <aside class="sidebar">
+                <div class="brand">
+                    <div class="brand-mark">
+                        <img src="https://i.ibb.co/rfLTSy2y/SRP.png" alt="" draggable="false" onload="this.parentElement.classList.add('has-image');" onerror="this.remove();this.parentElement.textContent='S';">
+                    </div>
+                    <div class="brand-name">SRP ADMIN</div>
+                </div>
+                <nav class="nav" id="nav"></nav>
+                <div class="sidebar-foot">
+                    <button class="nav-button" data-action="duty">
+                        <span class="nav-icon" data-icon="shield"></span>
+                        <span>Duty</span>
+                    </button>
+                    <button class="nav-button" data-action="close">
+                        <span class="nav-icon" data-icon="exit"></span>
+                        <span>Exit</span>
+                    </button>
+                </div>
+            </aside>
+
+            <main class="main">
+                <header class="topbar">
+                    <div class="server-pill">
+                        <span class="status-dot orange"></span>
+                        <strong>Players:</strong>
+                        <span id="playerCount">0/0</span>
+                    </div>
+                    <div class="search-wrap">
+                        <span class="field-icon" data-icon="search"></span>
+                        <input id="globalSearch" type="search" placeholder="Search">
+                        <kbd>Ctrl K</kbd>
+                    </div>
+                    <button id="announceBtn" class="primary-button">
+                        <span data-icon="megaphone"></span>
+                        <span>Announce</span>
+                    </button>
+                    <button id="notificationBtn" class="icon-button notification-trigger" title="Notifications" aria-expanded="false">
+                        <span data-icon="chat"></span>
+                        <i id="notificationCount">0</i>
+                    </button>
+                    <div class="top-spacer"></div>
+                    <div class="server-pill">
+                        <span class="status-dot green"></span>
+                        <strong>Uptime:</strong>
+                        <span id="uptime">0h 0m</span>
+                    </div>
+                    <label class="opacity-control">
+                        <span>Opacity</span>
+                        <input id="opacityRange" type="range" min="78" max="100" value="96">
+                    </label>
+                    <button id="dutyToggle" class="switch-button" aria-pressed="false">
+                        <span>Duty</span>
+                        <i></i>
+                    </button>
+                    <div class="admin-chip">
+                        <span id="adminName">Admin</span>
+                        <span class="avatar mini" id="adminAvatar">A</span>
+                    </div>
+                </header>
+
+                <section class="content" id="content"></section>
+            </main>
+
+            <aside class="player-rail">
+                <div class="rail-search">
+                    <input id="playerSearch" type="search" placeholder="Search players">
+                    <button id="refreshBtn" class="icon-button" title="Refresh">
+                        <span data-icon="refresh"></span>
+                    </button>
+                </div>
+                <div class="player-list" id="playerList"></div>
+            </aside>
+        </div>
+
+        <section id="notificationCenter" class="notification-center" hidden></section>
+    </div>
+
+    <div id="toasts" class="toasts"></div>
+    <div id="announcementHost" class="announcement-host"></div>
+    <div id="coordOverlay" class="coord-overlay" hidden></div>
+    <div id="spectateOverlay" class="spectate-overlay" hidden></div>
+
+    <script src="app.js?v=remote-feed-state1"></script>
+</body>
+</html>

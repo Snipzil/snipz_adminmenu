@@ -1,0 +1,101 @@
+# Snipz Admin Menu
+
+FiveM Qbox admin menu with ACE permissions, a dark NUI interface, player tools, vehicle tools, item/account tools, moderation, staff duty, blips, weather/time, console allowlisting, bans, warnings, and optional integrations.
+
+## Install
+
+1. Place this folder in your server resources as `snipz_adminmenu`.
+2. Add `ensure snipz_adminmenu` after `qbx_core` and after your permission sync resources in `server.cfg`. If FxPanel moderation logging is enabled, also ensure `monitor` before this resource.
+3. Use the permission bridge defaults or add the optional ACE permissions from `server.cfg.example`.
+4. Use `/adminmenu` or `F10` in game.
+5. Use `/admincar` while driving a vehicle to save it to your character, matching the ps-adminmenu admin car workflow.
+
+## Permissions
+
+The menu checks permissions server-side through `Config.PermissionBridge`:
+
+- Existing `snipz_adminmenu.*` ACE permissions still work.
+- txAdmin admins are accepted through the server-side `txAdmin:events:adminAuth` event. By default, authenticated txAdmin admins get full menu access.
+- fxPanel, Badger, and DiscordAcePerms-style setups are supported through ACE aliases in `Config.PermissionBridge.ExternalAce`.
+
+Most servers can use their existing admin ACE:
+
+```cfg
+add_ace group.admin command allow
+```
+
+Or use a resource-specific full-access ACE:
+
+```cfg
+add_ace group.admin snipz_adminmenu allow
+```
+
+Scoped ACE access is still available if you want limited staff roles:
+
+```text
+snipz_adminmenu
+snipz_adminmenu.all
+snipz_adminmenu.menu
+snipz_adminmenu.players
+snipz_adminmenu.spectate
+snipz_adminmenu.teleport
+snipz_adminmenu.revive
+snipz_adminmenu.heal
+snipz_adminmenu.punish
+snipz_adminmenu.kick
+snipz_adminmenu.ban
+snipz_adminmenu.warn
+snipz_adminmenu.freeze
+snipz_adminmenu.kill
+snipz_adminmenu.vehicles
+snipz_adminmenu.items
+snipz_adminmenu.inventory
+snipz_adminmenu.clothing
+snipz_adminmenu.ped
+snipz_adminmenu.accounts
+snipz_adminmenu.jobs
+snipz_adminmenu.bucket
+snipz_adminmenu.server
+snipz_adminmenu.console
+snipz_adminmenu.console.all
+snipz_adminmenu.staff
+snipz_adminmenu.blips
+snipz_adminmenu.destructive
+```
+
+To keep txAdmin admins limited instead of full access, set `Config.PermissionBridge.TxAdmin.GrantAll = false` and edit `Config.PermissionBridge.TxAdmin.GrantedPermissions`.
+
+To hook an existing Badger/fxPanel ACE object into the menu, add it to `Config.PermissionBridge.ExternalAce.FullAccess` or `Config.PermissionBridge.ExternalAce.PermissionMap`.
+
+If `command` is too broad for your server, remove it from `Config.PermissionBridge.ExternalAce.FullAccess` and use `snipz_adminmenu` or a custom full-access ACE instead.
+
+## Integrations
+
+Edit `config.lua` for your server:
+
+- `InventoryResource`: defaults to `ox_inventory`.
+- `FxPanelModeration`: defaults to enabled and calls `exports['monitor']` for warn, kick, ban, and announcements so actions are recorded by FxPanel/txAdmin history. The admin must be authenticated in FxPanel and have the matching `players.warn`, `players.kick`, `players.ban`, or `announcement` permission.
+- `ClothingEvent`: defaults to `citgo_appearance:openEditor`, with illenium as a fallback.
+- `FuelResource`: defaults to `lc_fuel`.
+- `VehicleKeysResource` and `VehicleKeysEvent`: default to `Renewed-Vehiclekeys` and `vehiclekeys:client:SetOwner`.
+- `HealthResetEvent` / `ReviveEvent`: default to the Solstice `visn_are:resetHealthBuffer` medical reset after the built-in revive or heal runs.
+- `JailResource` / `JailExport`: default to `xt-prison` and `SetJailTime`, with `JailEvent` / `UnjailEvent` as fallbacks.
+- `Weather.Resource`: defaults to `Renewed-Weathersync` through its `qb-weathersync` compatibility exports.
+- `Console.AllowedCommands`: only these console commands can be executed unless the admin has `snipz_adminmenu.console.all`.
+- `ChatSuggestions`: controls slash-command autocomplete in the FiveM chat box. This server uses the stock `chat` resource with `qbx_chat_theme`, so suggestions are replayed when either starts. Use `/adminsuggestions` in game to refresh suggestions after a chat/resource restart.
+- `AdminCar.Command` / `AdminCar.Garage`: controls the ps-style current vehicle save command. Leave `Garage = nil` to save it as out, like ps-adminmenu.
+- `PermissionBridge`: maps txAdmin auth and external ACE objects into the menu permissions.
+- `AllowedEvents`: add explicit server/client events for the Events tab.
+
+## Stored Data
+
+The resource stores local JSON files:
+
+- `bans.json`
+- `warnings.json`
+
+They are created automatically in the resource folder. When `FxPanelModeration.Enabled = true`, new bans are handled by FxPanel instead of `bans.json`; local warnings are still mirrored so the menu can show them in player profiles.
+
+## Notes
+
+All real admin actions go through `server/main.lua` and are checked with ACE before any client event fires. Client-side NUI buttons alone do not grant permissions.

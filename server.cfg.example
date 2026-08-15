@@ -1,0 +1,45 @@
+ensure qbx_core
+# Ensure txAdmin/fxPanel/Badger/DiscordAcePerms resources before the menu when you use them.
+# FxPanel moderation exports are served by the monitor resource.
+# ensure monitor
+ensure snipz_adminmenu
+
+# Most txAdmin/fxPanel servers already use this. The menu trusts it by default through
+# Config.PermissionBridge.ExternalAce.FullAccess, so you do not need to add every menu node.
+add_ace group.admin command allow
+
+# Optional resource-specific full access if you do not want to bridge the broad command ACE.
+# add_ace group.admin snipz_adminmenu allow
+
+# Optional Badger/fxPanel aliases. Add your existing objects to Config.PermissionBridge
+# if your server uses different names.
+# add_ace group.admin badger.admin allow
+# add_ace group.admin fxpanel.admin allow
+# add_ace group.admin BadgerStaffPanel.Admin allow
+
+# Optional scoped moderator role.
+add_ace group.moderator snipz_adminmenu.menu allow
+add_ace group.moderator snipz_adminmenu.players allow
+add_ace group.moderator snipz_adminmenu.spectate allow
+add_ace group.moderator snipz_adminmenu.teleport allow
+add_ace group.moderator snipz_adminmenu.revive allow
+add_ace group.moderator snipz_adminmenu.heal allow
+add_ace group.moderator snipz_adminmenu.warn allow
+add_ace group.moderator snipz_adminmenu.kick allow
+add_ace group.moderator snipz_adminmenu.freeze allow
+add_ace group.moderator snipz_adminmenu.vehicles allow
+
+# Optional senior admin extras.
+add_ace group.senioradmin snipz_adminmenu.ban allow
+add_ace group.senioradmin snipz_adminmenu.punish allow
+add_ace group.senioradmin snipz_adminmenu.items allow
+add_ace group.senioradmin snipz_adminmenu.inventory allow
+add_ace group.senioradmin snipz_adminmenu.clothing allow
+add_ace group.senioradmin snipz_adminmenu.accounts allow
+add_ace group.senioradmin snipz_adminmenu.jobs allow
+add_ace group.senioradmin snipz_adminmenu.server allow
+add_ace group.senioradmin snipz_adminmenu.console allow
+add_ace group.senioradmin snipz_adminmenu.destructive allow
+
+# Example principal assignment.
+# add_principal identifier.license:YOUR_LICENSE_HERE group.admin
