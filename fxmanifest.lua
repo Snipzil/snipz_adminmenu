@@ -18,6 +18,7 @@ client_scripts {
 }
 
 server_scripts {
+    '@oxmysql/lib/MySQL.lua',
     'server/main.lua'
 }
 
@@ -34,5 +35,6 @@ files {
 
 dependencies {
     'ox_lib',
-    'qbx_core'
+    'qbx_core',
+    'oxmysql'
 }

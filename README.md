@@ -5,10 +5,11 @@ FiveM Qbox admin menu with ACE permissions, a dark NUI interface, player tools, 
 ## Install
 
 1. Place this folder in your server resources as `snipz_adminmenu`.
-2. Add `ensure snipz_adminmenu` after `qbx_core` and after your permission sync resources in `server.cfg`. If FxPanel moderation logging is enabled, also ensure `monitor` before this resource.
-3. Use the permission bridge defaults or add the optional ACE permissions from `server.cfg.example`.
-4. Use `/adminmenu` or `F10` in game.
-5. Use `/admincar` while driving a vehicle to save it to your character, matching the ps-adminmenu admin car workflow.
+2. Add `ensure snipz_adminmenu` after `qbx_core`, `oxmysql`, and your permission sync resources in `server.cfg`. If FxPanel moderation logging is enabled, also ensure `monitor` before this resource.
+3. The database table is created automatically on first start. To provision it manually, import `sql/snipz_adminmenu.sql`.
+4. Use the permission bridge defaults or add the optional ACE permissions from `server.cfg.example`.
+5. Use `/adminmenu` or `F10` in game.
+6. Use `/admincar` while driving a vehicle to save it to your character, matching the ps-adminmenu admin car workflow.
 
 ## Permissions
 
@@ -100,18 +101,19 @@ server; each option lists common alternatives in a comment.
 
 ## Stored Data
 
-The resource writes local JSON files in its own folder, created automatically on
-first use:
+Bans, warnings, notes, and staff tags are persisted in the server's MySQL
+database through `oxmysql`, in a single table `snipz_adminmenu_storage` (one JSON
+document per store). The table is created automatically on first start.
 
-- `bans.json`
-- `warnings.json`
-- `notes.json`
-- `staff_tags.json`
+If `oxmysql` is not running, the resource falls back to local JSON files
+(`bans.json`, `warnings.json`, `notes.json`, `staff_tags.json`) so it still boots.
+On the first start with a database available, any existing JSON files are imported
+into the table and then archived as `<file>.imported`. All of these files hold
+live player identifiers and are listed in `.gitignore` — never commit them.
 
-These hold live player identifiers and moderation history, so they are listed in
-`.gitignore` and must not be committed. When `FxPanelModeration.Enabled = true`,
-new bans are handled by FxPanel instead of `bans.json`; local warnings are still
-mirrored so the menu can show them in player profiles.
+When `FxPanelModeration.Enabled = true`, new bans are handled by FxPanel instead
+of this store; local warnings are still mirrored so the menu can show them in
+player profiles.
 
 To configure Discord avatars and role-based staff tags, fill in
 `Config.Discord.BotToken`, `Config.Discord.GuildId`, and `Config.Discord.RoleTags`

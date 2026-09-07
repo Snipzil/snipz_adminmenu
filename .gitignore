@@ -4,6 +4,7 @@ bans.json
 warnings.json
 notes.json
 staff_tags.json
+*.imported
 
 # Editor / OS noise
 .DS_Store

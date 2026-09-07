@@ -4,6 +4,7 @@ local bans = {}
 local warnings = {}
 local notes = {}
 local staffTags = {}
+local storageReady = false
 local duty = {}
 local actionLogs = {}
 local chatLogs = {}
@@ -166,6 +167,130 @@ end
 
 local function saveJsonFile(fileName, data)
     SaveResourceFile(RESOURCE, fileName, json.encode(data), -1)
+end
+
+--[[
+    Persistence layer.
+
+    Bans, warnings, notes and staff tags are stored in the server's MySQL
+    database through oxmysql (one JSON row per store in `snipz_adminmenu_storage`)
+    so the data survives resource re-downloads and is backed up with the DB.
+
+    If oxmysql is not available the resource transparently falls back to the
+    legacy local JSON files so it still boots. Existing JSON files are imported
+    into the database once, then archived as `<file>.imported`.
+]]
+local STORAGE_TABLE = 'snipz_adminmenu_storage'
+
+local STORAGE_FILES = {
+    bans = Config.Security.BanFile,
+    warnings = Config.Security.WarningsFile,
+    notes = Config.Security.NotesFile,
+    staffTags = Config.Security.StaffTagsFile
+}
+
+local function mysqlAvailable()
+    return type(MySQL) == 'table' and type(MySQL.query) == 'table' and type(MySQL.query.await) == 'function'
+end
+
+local function storeTable(name)
+    if name == 'bans' then return bans end
+    if name == 'warnings' then return warnings end
+    if name == 'notes' then return notes end
+    if name == 'staffTags' then return staffTags end
+    return nil
+end
+
+-- Write one store back to its persistent home (database row, or JSON file fallback).
+local function persistStore(name, awaitWrite)
+    local data = storeTable(name)
+    if data == nil then return end
+
+    if storageReady then
+        local query = ('INSERT INTO %s (store, data, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = VALUES(updated_at)'):format(STORAGE_TABLE)
+        local params = { name, json.encode(data), os.time() }
+
+        if awaitWrite then
+            MySQL.prepare.await(query, params)
+        else
+            MySQL.prepare(query, params)
+        end
+        return
+    end
+
+    local fileName = STORAGE_FILES[name]
+    if fileName then saveJsonFile(fileName, data) end
+end
+
+local function ensureStorageSchema()
+    if not mysqlAvailable() then return false end
+
+    local ok, err = pcall(function()
+        MySQL.query.await(([[
+            CREATE TABLE IF NOT EXISTS %s (
+                `store` VARCHAR(32) NOT NULL,
+                `data` LONGTEXT NOT NULL,
+                `updated_at` INT UNSIGNED NOT NULL DEFAULT 0,
+                PRIMARY KEY (`store`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ]]):format(STORAGE_TABLE))
+    end)
+
+    if not ok then
+        print(('[%s] Could not prepare the storage table, using JSON files instead: %s'):format(RESOURCE, err))
+        return false
+    end
+
+    return true
+end
+
+local function loadStoresFromDatabase()
+    local rows = MySQL.query.await(('SELECT store, data FROM %s'):format(STORAGE_TABLE)) or {}
+    local byStore = {}
+
+    for _, row in ipairs(rows) do
+        local decodeOk, decoded = pcall(json.decode, row.data)
+        byStore[row.store] = (decodeOk and type(decoded) == 'table') and decoded or {}
+    end
+
+    bans = byStore.bans or {}
+    warnings = byStore.warnings or {}
+    notes = byStore.notes or {}
+    staffTags = byStore.staffTags or {}
+end
+
+local function archiveLegacyFile(fileName)
+    if not fileName then return end
+
+    local raw = LoadResourceFile(RESOURCE, fileName)
+    if not raw or raw == '' or raw == '{}' then return end
+
+    SaveResourceFile(RESOURCE, ('%s.imported'):format(fileName), raw, -1)
+    SaveResourceFile(RESOURCE, fileName, '{}', -1)
+end
+
+-- One-time import of any pre-existing JSON files into the database.
+local function migrateLegacyJsonStores()
+    for _, name in ipairs({ 'bans', 'warnings', 'notes', 'staffTags' }) do
+        if not next(storeTable(name) or {}) then
+            local legacy = loadJsonFile(STORAGE_FILES[name], nil)
+            if type(legacy) == 'table' and next(legacy) then
+                if name == 'bans' then
+                    bans = legacy
+                elseif name == 'warnings' then
+                    warnings = legacy
+                elseif name == 'notes' then
+                    notes = legacy
+                else
+                    staffTags = legacy
+                end
+
+                persistStore(name, true)
+                archiveLegacyFile(STORAGE_FILES[name])
+                print(('[%s] Imported %s into the database.'):format(RESOURCE, STORAGE_FILES[name]))
+            end
+        end
+    end
 end
 
 local function now()
@@ -1784,19 +1909,23 @@ end
 
 local function findBanForIdentifiers(identifiers)
     local currentTimeValue = now()
+    local expiredRemoved = false
 
     for banId, ban in pairs(bans) do
         if ban.expires and ban.expires ~= 0 and ban.expires <= currentTimeValue then
             bans[banId] = nil
+            expiredRemoved = true
         else
             for _, identifier in ipairs(identifiers) do
                 if ban.identifiers and ban.identifiers[identifier] then
+                    if expiredRemoved then persistStore('bans') end
                     return banId, ban
                 end
             end
         end
     end
 
+    if expiredRemoved then persistStore('bans') end
     return nil, nil
 end
 
@@ -2185,7 +2314,7 @@ handlers['player.noteAdd'] = function(source, data)
     }
 
     table.insert(notes[identifier], 1, entry)
-    saveJsonFile(Config.Security.NotesFile, notes)
+    persistStore('notes')
     logAction(source, 'Add Note', actorName(target), noteText)
     return true, 'Note added.'
 end
@@ -2210,7 +2339,7 @@ handlers['player.noteEdit'] = function(source, data)
             note.updated = now()
             note.updatedBy = actorName(source)
             note.updatedById = source
-            saveJsonFile(Config.Security.NotesFile, notes)
+            persistStore('notes')
             logAction(source, 'Edit Note', actorName(target), noteText)
             return true, 'Note updated.'
         end
@@ -2235,7 +2364,7 @@ handlers['player.noteDelete'] = function(source, data)
             end
 
             table.remove(list, index)
-            saveJsonFile(Config.Security.NotesFile, notes)
+            persistStore('notes')
             logAction(source, 'Delete Note', actorName(target), note.note or noteId)
             return true, 'Note deleted.'
         end
@@ -2260,7 +2389,7 @@ handlers['staff.tagSet'] = function(source, data)
         time = now()
     }
 
-    saveJsonFile(Config.Security.StaffTagsFile, staffTags)
+    persistStore('staffTags')
     logAction(source, 'Set Staff Tag', actorName(target), tag.label)
     return true, 'Staff tag updated.'
 end
@@ -2277,7 +2406,7 @@ handlers['staff.tagClear'] = function(source, data)
     local existing = staffTags[identifier]
     local label = type(existing) == 'table' and existing.label or tostring(existing or '')
     staffTags[identifier] = nil
-    saveJsonFile(Config.Security.StaffTagsFile, staffTags)
+    persistStore('staffTags')
     logAction(source, 'Clear Staff Tag', actorName(target), label)
     return true, 'Staff tag cleared.'
 end
@@ -2293,7 +2422,7 @@ local function addLocalWarning(source, target, reason)
         reason = reason
     })
 
-    saveJsonFile(Config.Security.WarningsFile, warnings)
+    persistStore('warnings')
 end
 
 handlers['player.warn'] = function(source, data)
@@ -2332,7 +2461,7 @@ handlers['player.warnEdit'] = function(source, data)
             warning.updated = now()
             warning.updatedBy = actorName(source)
             warning.updatedById = source
-            saveJsonFile(Config.Security.WarningsFile, warnings)
+            persistStore('warnings')
             logAction(source, 'Edit Warning', actorName(target), reason)
             return true, 'Warning updated.'
         end
@@ -2353,7 +2482,7 @@ handlers['player.warnDelete'] = function(source, data)
     for index, warning in ipairs(list) do
         if warningId(warning, index) == warnId then
             table.remove(list, index)
-            saveJsonFile(Config.Security.WarningsFile, warnings)
+            persistStore('warnings')
             logAction(source, 'Delete Warning', actorName(target), warning.reason or warnId)
             return true, 'Warning deleted.'
         end
@@ -2417,7 +2546,7 @@ handlers['player.ban'] = function(source, data)
         identifiers = idSet
     }
 
-    saveJsonFile(Config.Security.BanFile, bans)
+    persistStore('bans')
     DropPlayer(target, getBanMessage(bans[banId]))
     return true, 'Player banned.'
 end
@@ -2428,7 +2557,7 @@ handlers['ban.remove'] = function(source, data)
 
     local name = bans[banId].name or banId
     bans[banId] = nil
-    saveJsonFile(Config.Security.BanFile, bans)
+    persistStore('bans')
     logAction(source, 'Unban', name, banId)
     return true, 'Ban removed.'
 end
@@ -4147,11 +4276,26 @@ AddEventHandler('chatMessage', function(source, name, message)
 end)
 
 CreateThread(function()
-    bans = loadJsonFile(Config.Security.BanFile, {})
-    warnings = loadJsonFile(Config.Security.WarningsFile, {})
-    notes = loadJsonFile(Config.Security.NotesFile, {})
-    staffTags = loadJsonFile(Config.Security.StaffTagsFile, {})
     math.randomseed(GetGameTimer() + os.time())
+
+    if ensureStorageSchema() then
+        local ok, err = pcall(loadStoresFromDatabase)
+        if ok then
+            storageReady = true
+            pcall(migrateLegacyJsonStores)
+            print(('[%s] Persistence backend: MySQL database (table %s).'):format(RESOURCE, STORAGE_TABLE))
+        else
+            print(('[%s] Failed to read persistence tables, using JSON files instead: %s'):format(RESOURCE, err))
+        end
+    end
+
+    if not storageReady then
+        bans = loadJsonFile(Config.Security.BanFile, {})
+        warnings = loadJsonFile(Config.Security.WarningsFile, {})
+        notes = loadJsonFile(Config.Security.NotesFile, {})
+        staffTags = loadJsonFile(Config.Security.StaffTagsFile, {})
+        print(('[%s] Persistence backend: local JSON files (oxmysql not detected).'):format(RESOURCE))
+    end
 
     print(('[%s] Loaded. ACE root: %s'):format(RESOURCE, Config.Ace.Root))
     logConsole('info', ('Loaded. ACE root: %s'):format(Config.Ace.Root), RESOURCE)
