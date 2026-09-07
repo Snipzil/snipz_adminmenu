@@ -1,0 +1,11 @@
+# Runtime data written by the resource. These hold live player identifiers,
+# bans, warnings and notes and should never be committed to a public repo.
+bans.json
+warnings.json
+notes.json
+staff_tags.json
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.log

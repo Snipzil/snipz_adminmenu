@@ -1,17 +1,38 @@
 Config = {}
 
-Config.Command = 'am'
-Config.Keybind = 'GRAVE'
-Config.NoClipCommand = 'anoclip'
-Config.NoClipKeybind = 'PAGEUP'
-Config.NoclipCommand = Config.NoClipCommand
-Config.NoclipKeybind = Config.NoClipKeybind
-Config.MenuTitle = 'SAdmin'
-Config.CoordFinderCommand = 'coordfinder'
+--[[
+    Snipz Admin Menu configuration.
+
+    This file ships with sensible, framework-neutral defaults so the menu works
+    out of the box on a standard Qbox server. Every optional integration is
+    resource-gated: if the resource you point it at is not running, the menu
+    silently falls back to its built-in behaviour instead of erroring.
+
+    Anything that is server specific (Discord IDs, webhooks, branding, paid
+    resource names) is left blank or commented. Fill in what your server uses.
+]]
+
+-- Command + keybind used to open the menu. Players can rebind the key in the
+-- FiveM settings > Key Bindings menu.
+Config.Command = 'adminmenu'
 Config.Keybind = 'F10'
+
+-- Standalone noclip toggle. Leave the keybind blank so staff can bind it
+-- themselves, or set e.g. 'PAGEUP'.
 Config.NoclipCommand = 'noclip'
 Config.NoclipKeybind = ''
+
+-- Coordinate finder / development tool.
+Config.CoordFinderCommand = 'coordfinder'
+-- Where the coord finder laser starts from: 'body' or 'camera'.
+Config.CoordFinderLaserOrigin = 'body'
+
+-- Shown in the NUI header and used as the Discord webhook username.
 Config.MenuTitle = 'Snipz Admin'
+-- Optional logo URL for the NUI header. Leave blank to show the first letter
+-- of Config.MenuTitle instead.
+Config.MenuLogo = ''
+
 Config.RefreshInterval = 5000
 
 Config.RemoteFeed = {
@@ -25,7 +46,7 @@ Config.RemoteFeed = {
 
 Config.AdminCar = {
     Command = 'admincar',
-    Garage = nil -- nil mirrors ps-adminmenu admincar by saving the current vehicle as out instead of garaged.
+    Garage = nil -- nil mirrors ps-adminmenu admincar by saving the current vehicle as "out" instead of garaged.
 }
 
 Config.ChatSuggestions = {
@@ -38,7 +59,7 @@ Config.ChatSuggestions = {
     Commands = {
         {
             command = Config.Command,
-            help = 'Open the SRP admin menu',
+            help = 'Open the admin menu',
             permission = 'menu',
             showWithoutPermission = true
         },
@@ -62,7 +83,7 @@ Config.ChatSuggestions = {
         },
         {
             command = 'adminsuggestions',
-            help = 'Refresh Snipz admin chat autocomplete',
+            help = 'Refresh admin chat autocomplete',
             showWithoutPermission = true
         },
         {
@@ -258,6 +279,7 @@ Config.Security = {
     NotesFile = 'notes.json',
     StaffTagsFile = 'staff_tags.json',
     LogToConsole = true,
+    -- Optional Discord webhook for the full admin action audit log. Leave blank to disable.
     Webhook = ''
 }
 
@@ -276,9 +298,11 @@ Config.StaffTags = {
 }
 
 Config.AdminChat = {
-    Webhook = 'https://discord.com/api/webhooks/XXXXXXXXXXXXXXXXXX/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-    Username = 'SAdmin Chat',
-    AvatarUrl = 'https://i.ibb.co/rfLTSy2y/SRP.png',
+    -- Optional Discord webhook that mirrors the staff admin chat. Leave blank to disable.
+    Webhook = '',
+    Username = 'Admin Chat',
+    -- Optional avatar URL for the webhook messages.
+    AvatarUrl = '',
     MaxHistory = 50,
     Templates = {
         'Please keep chat respectful.',
@@ -289,43 +313,74 @@ Config.AdminChat = {
 }
 
 Config.Discord = {
-    BotToken = 'YOUR_DISCORD_BOT_TOKEN_HERE',
+    -- Optional. A Discord bot token unlocks avatar thumbnails and role-based
+    -- staff tags in the menu. Leave blank to disable all Discord lookups.
+    BotToken = '',
     AvatarSize = 128,
     AvatarCacheSeconds = 3600,
-    GuildId = '1353280059557023786',
+    -- Your Discord server (guild) ID. Only required if you use RoleTags below.
+    GuildId = '',
     RoleTagCacheSeconds = 300,
     RoleTagDebug = false,
-    RoleTags = {
-        -- Profile shows all matching roles. The side player list uses the first/highest match.
-         { roleId = '1357011977511239854', label = 'Management', color = '#a000ff' },
-         { roleId = '1397322412336353411', label = 'Chief of Staff', color = '#f44336' },
-         { roleId = '1357012229735710910', label = 'Staff', color = '#ad1457' },
-         { roleId = '1357017847846666461', label = 'Trial Staff', color = '#ff51c2' },
-         { roleId = '1371657273423953951', label = 'Development Lead', color = '#dd4b23' },
-         { roleId = '1371657152782930021', label = 'Development', color = '#dd4b23' }
-    }
+    -- Map Discord role IDs to staff tags. The profile shows every matching role;
+    -- the side player list uses the first/highest match. Example:
+    -- RoleTags = {
+    --     { roleId = '000000000000000000', label = 'Management', color = '#a000ff' },
+    --     { roleId = '000000000000000000', label = 'Staff',      color = '#ad1457' },
+    --     { roleId = '000000000000000000', label = 'Trial Staff', color = '#ff51c2' },
+    -- }
+    RoleTags = {}
 }
 
 Config.Integrations = {
+    -- FxPanel / txAdmin moderation history. When enabled, warn/kick/ban/announce
+    -- are routed through the `monitor` resource so they appear in txAdmin history.
+    -- The acting admin must be authenticated in FxPanel with the matching
+    -- players.warn / players.kick / players.ban / announcement permission.
+    -- Disabled by default so the menu works without FxPanel configured.
     FxPanelModeration = {
-        Enabled = true,
+        Enabled = false,
         Resource = 'monitor',
         CheckPermissions = true
     },
+
+    -- Inventory resource for item lists and give/remove/clear item actions.
+    -- Common: 'ox_inventory', 'qb-inventory', 'qs-inventory', 'codem-inventory', 'origen_inventory'.
     InventoryResource = 'ox_inventory',
-    ClothingEvent = 'citgo_appearance:openEditor',
+
+    -- Clothing / appearance editor. The menu fires ClothingEvent if its resource
+    -- is running, otherwise it walks ClothingFallbackEvents in order.
+    -- Common: 'illenium-appearance', 'fivem-appearance', 'qb-clothing', 'citgo_appearance'.
+    ClothingEvent = 'illenium-appearance:client:openClothingShopMenu',
     ClothingFallbackEvents = {
-        'illenium-appearance:client:openClothingShopMenu'
+        'qb-clothing:client:openMenu',
+        'fivem-appearance:client:openClothes',
+        'citgo_appearance:openEditor'
     },
     BarberEvent = 'illenium-appearance:client:openBarberShopMenu',
     TattooEvent = 'illenium-appearance:client:openTattooShop',
-    FuelResource = 'lc_fuel',
-    MechanicResource = 'jg-mechanic',
-    MechanicCustomisationEvent = 'jg-mechanic:client:open-customisation-menu',
-    MechanicCustomisationId = 'bennys',
-    MechanicCustomisationLabel = 'Benny\'s',
-    VehicleKeysResource = 'Renewed-Vehiclekeys',
-    VehicleKeysEvent = 'vehiclekeys:client:SetOwner',
+
+    -- Fuel resource for the refuel action. The native fuel level is always set;
+    -- this just keeps a fuel script in sync if one is running.
+    -- Common: 'LegacyFuel', 'ox_fuel', 'ps-fuel', 'cdn-fuel', 'lc_fuel'.
+    FuelResource = 'LegacyFuel',
+
+    -- Optional mechanic resource for the "open customisation" shortcut.
+    -- Leave blank to hide it. Example (jg-mechanic):
+    --   MechanicResource = 'jg-mechanic',
+    --   MechanicCustomisationEvent = 'jg-mechanic:client:open-customisation-menu',
+    --   MechanicCustomisationId = 'bennys',
+    --   MechanicCustomisationLabel = "Benny's",
+    MechanicResource = '',
+    MechanicCustomisationEvent = '',
+    MechanicCustomisationId = '',
+    MechanicCustomisationLabel = '',
+
+    -- Vehicle keys granted after spawning / admin-car / give-keys actions.
+    -- The menu tries exports[VehicleKeysResource]:addKey(plate) first, then the event.
+    -- Common: 'qb-vehiclekeys', 'Renewed-Vehiclekeys', 'wasabi_carlock', 'MrNewbVehicleKeys', 'cd_garage'.
+    VehicleKeysResource = 'qb-vehiclekeys',
+    VehicleKeysEvent = 'qb-vehiclekeys:client:AddKeys',
     VehicleKeyItems = {
         'vehiclekey',
         'vehiclekeys',
@@ -337,13 +392,23 @@ Config.Integrations = {
         'carkeys',
         'keys'
     },
-    HealthResetEvent = 'visn_are:resetHealthBuffer',
-    ReviveEvent = 'visn_are:resetHealthBuffer',
-    JailResource = 'xt-prison',
-    JailExport = 'SetJailTime',
+
+    -- Optional event fired after the built-in revive/heal, for medical/injury
+    -- systems that need their own reset. Leave blank unless you run one.
+    -- Example (Solstice): 'visn_are:resetHealthBuffer'.
+    HealthResetEvent = '',
+    ReviveEvent = '',
+
+    -- Jail system. The menu calls exports[JailResource][JailExport](...) if both
+    -- are set, otherwise it triggers JailEvent / UnjailEvent.
+    -- Common: 'qb-prison' (event 'police:server:JailPlayer'),
+    --         'xt-prison'  (export 'SetJailTime'),
+    --         'rcore_prison'.
+    JailResource = 'qb-prison',
+    JailExport = '',
     JailEvent = 'police:server:JailPlayer',
     JailEventType = 'server',
-    UnjailEvent = 'prison:client:UnjailPerson',
+    UnjailEvent = 'police:client:UnjailPerson',
     UnjailEventType = 'client'
 }
 

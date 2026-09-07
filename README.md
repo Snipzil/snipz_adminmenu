@@ -70,17 +70,26 @@ To hook an existing Badger/fxPanel ACE object into the menu, enable `Config.Perm
 
 Leave generic `command.*` entries out of `ExternalAce` unless you intentionally want that broad bridge.
 
+## Branding
+
+- `Config.MenuTitle`: shown in the NUI header (as its first letter when no logo is set) and used as the Discord webhook username.
+- `Config.MenuLogo`: optional image URL for the NUI header. Leave blank to show the title initial.
+
 ## Integrations
 
-Edit `config.lua` for your server:
+Every integration below is resource-gated: if the resource you point it at is
+not running, the menu falls back to its built-in behaviour instead of erroring.
+The shipped defaults target a standard Qbox stack. Edit `config.lua` for your
+server; each option lists common alternatives in a comment.
 
-- `InventoryResource`: defaults to `ox_inventory`.
-- `FxPanelModeration`: defaults to enabled and calls `exports['monitor']` for warn, kick, ban, and announcements so actions are recorded by FxPanel/txAdmin history. The admin must be authenticated in FxPanel and have the matching `players.warn`, `players.kick`, `players.ban`, or `announcement` permission.
-- `ClothingEvent`: defaults to `citgo_appearance:openEditor`, with illenium as a fallback.
-- `FuelResource`: defaults to `lc_fuel`.
-- `VehicleKeysResource` and `VehicleKeysEvent`: default to `Renewed-Vehiclekeys` and `vehiclekeys:client:SetOwner`.
-- `HealthResetEvent` / `ReviveEvent`: default to the Solstice `visn_are:resetHealthBuffer` medical reset after the built-in revive or heal runs.
-- `JailResource` / `JailExport`: default to `xt-prison` and `SetJailTime`, with `JailEvent` / `UnjailEvent` as fallbacks.
+- `InventoryResource`: defaults to `ox_inventory` (also `qb-inventory`, `qs-inventory`, `codem-inventory`).
+- `FxPanelModeration`: **disabled by default.** Enable to route warn/kick/ban/announce through `exports['monitor']` so they land in FxPanel/txAdmin history. The acting admin must be authenticated in FxPanel with the matching `players.warn`, `players.kick`, `players.ban`, or `announcement` permission.
+- `ClothingEvent`: defaults to `illenium-appearance`, then walks `ClothingFallbackEvents` (`qb-clothing`, `fivem-appearance`, `citgo_appearance`).
+- `FuelResource`: defaults to `LegacyFuel` (also `ox_fuel`, `ps-fuel`, `cdn-fuel`, `lc_fuel`). The native fuel level is always set regardless.
+- `VehicleKeysResource` / `VehicleKeysEvent`: default to `qb-vehiclekeys` (also `Renewed-Vehiclekeys`, `wasabi_carlock`, `MrNewbVehicleKeys`).
+- `MechanicResource`: blank by default. Set the three `MechanicCustomisation*` values to expose the customisation shortcut (example for `jg-mechanic` in `config.lua`).
+- `HealthResetEvent` / `ReviveEvent`: blank by default. Set an event here if you run a medical/injury system that needs its own reset after revive/heal (e.g. Solstice `visn_are:resetHealthBuffer`).
+- `JailResource` / `JailExport` / `JailEvent`: default to `qb-prison` via `police:server:JailPlayer` (also `xt-prison` with export `SetJailTime`, `rcore_prison`).
 - `Weather.Resource`: defaults to `Renewed-Weathersync` through its `qb-weathersync` compatibility exports.
 - `Console.AllowedCommands`: only these console commands can be executed unless the admin has `snipz_adminmenu.console.all`.
 - `Security.StrictAllowLists`: enabled by default, so items, weapons, vehicles, peds, jobs, gangs, licenses, weather, and money accounts must exist in `config.lua` before the menu will apply them.
@@ -91,12 +100,23 @@ Edit `config.lua` for your server:
 
 ## Stored Data
 
-The resource stores local JSON files:
+The resource writes local JSON files in its own folder, created automatically on
+first use:
 
 - `bans.json`
 - `warnings.json`
+- `notes.json`
+- `staff_tags.json`
 
-They are created automatically in the resource folder. When `FxPanelModeration.Enabled = true`, new bans are handled by FxPanel instead of `bans.json`; local warnings are still mirrored so the menu can show them in player profiles.
+These hold live player identifiers and moderation history, so they are listed in
+`.gitignore` and must not be committed. When `FxPanelModeration.Enabled = true`,
+new bans are handled by FxPanel instead of `bans.json`; local warnings are still
+mirrored so the menu can show them in player profiles.
+
+To configure Discord avatars and role-based staff tags, fill in
+`Config.Discord.BotToken`, `Config.Discord.GuildId`, and `Config.Discord.RoleTags`
+in `config.lua`. All three are blank by default and Discord lookups stay disabled
+until they are set.
 
 ## Notes
 

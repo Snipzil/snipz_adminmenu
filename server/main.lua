@@ -1610,6 +1610,7 @@ local function getConfigForNui()
 
     return {
         title = Config.MenuTitle,
+        logo = Config.MenuLogo or '',
         command = Config.Command,
         refreshInterval = Config.RefreshInterval,
         items = configuredItems(),

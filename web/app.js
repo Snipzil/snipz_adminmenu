@@ -1661,10 +1661,40 @@ function renderNav() {
     `).join('');
 }
 
+function applyBranding(config = {}) {
+    const title = String(config.title || 'Admin Menu').trim() || 'Admin Menu';
+    const logo = String(config.logo || '').trim();
+
+    if (els.brandName) els.brandName.textContent = title.toUpperCase();
+    document.title = title;
+
+    if (!els.brandMark) return;
+
+    const initial = title.charAt(0).toUpperCase() || 'A';
+    if (els.brandMark.dataset.brand === `${title}|${logo}`) return;
+    els.brandMark.dataset.brand = `${title}|${logo}`;
+    els.brandMark.classList.remove('has-image');
+    els.brandMark.textContent = initial;
+
+    if (!logo) return;
+
+    const img = new Image();
+    img.draggable = false;
+    img.alt = '';
+    img.addEventListener('load', () => {
+        els.brandMark.textContent = '';
+        els.brandMark.classList.add('has-image');
+        els.brandMark.appendChild(img);
+    });
+    img.src = logo;
+}
+
 function renderChrome() {
     const snapshot = state.snapshot || demoSnapshot();
     const server = snapshot.server || {};
     const self = snapshot.self || {};
+
+    applyBranding(snapshot.config || {});
 
     els.playerCount.textContent = `${server.players || 0}/${server.maxPlayers || 0}`;
     els.uptime.textContent = server.uptime || '0h 0m';
@@ -4207,6 +4237,7 @@ function demoSnapshot() {
     return {
         config: {
             title: 'Snipz Admin',
+            logo: '',
             command: 'adminmenu',
             items: [
                 { name: 'water', label: 'Water' },
@@ -4349,7 +4380,7 @@ function demoSnapshot() {
         ownedVehicles: [
             {
                 id: 101,
-                plate: 'SRP123',
+                plate: 'ADMIN01',
                 model: 'sultanrs',
                 ownerName: 'Maya Chen',
                 citizenid: 'EMS-7718',
@@ -4389,6 +4420,8 @@ function demoSnapshot() {
 
 function init() {
     els.app = document.getElementById('app');
+    els.brandMark = document.getElementById('brandMark');
+    els.brandName = document.getElementById('brandName');
     els.nav = document.getElementById('nav');
     els.content = document.getElementById('content');
     els.playerList = document.getElementById('playerList');
